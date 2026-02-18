@@ -1,10 +1,16 @@
 import socket
 import random
+import time
 from datetime import datetime
 from packet import Packet
 
+def log(message, level="INFO"):
+    timestamp = datetime.now().strftime("%M:%S.%f")[:-3]
+    log_line = f"[{timestamp}] [{level}] {message}"
+    print(log_line)
+
 def ts():
-    return datetime.now().strftime("%M:%S.%f")
+    return datetime.now().strftime("%M:%S.%f")[:-3] 
 
 class RDTClient:
     def __init__(self, server_ip, port, rdt_version= 2.0, timeout=None, p_ack_drop=0.0):
@@ -18,94 +24,94 @@ class RDTClient:
 
     def connect(self):
         self.sock.connect(self.server_address)
-        # Do not set a global timeout here; timeout is applied only for rdt 3.0 per-send
-        print(f"[{ts()}] [*] Conectado a {self.server_address}")
-        print(f"[{ts()}] [*] Configurado con P(drop ACK/NACK)={self.p_ack_drop} y timeout={self.timeout}s (Para RDT 3.0)")
+        log(f"Conectado a {self.server_address}")
+        log(f"Configuración: P(pérdida ACK/NACK)={self.p_ack_drop}, tiempo de espera={self.timeout}s (Para RDT 3.0)")
 
     def rdt_send(self, data_list):
         """
-        Envía una lista de mensajes siguiendo las reglas del protocolo indicado.
+        Sends a list of messages following the rules of the selected protocol.
         """
         for message in data_list:
-            entregado = False
-            intentos = 1
+            delivered = False
+            attemps = 1
             
-            while not entregado:
-                # 1. Construir
+            while not delivered:
+                # 1. Build packet
                 pkt = Packet("DATA", self.current_seq, self.global_pkt_id, message)
                 
-                # 2. Enviar y registrar traza (Requerido por informe)
-                print(f"\n[{ts()}] ===== TX PKT id={pkt.pkt_id} seq={pkt.seq} =====")
-                print(f"[{ts()}] [S] SEND {pkt.encode()} (Intento {intentos})")
+                # 2. Send and record trace (Required by report)
+                log(f"\n===== TX PKT id={pkt.pkt_id} seq={pkt.seq} =====")
+                log(f"[S] ENVIAR {pkt.encode()} (Intento {attemps})")
                 self.sock.send(pkt.encode().encode())
 
                 try:
-                    # 3. Esperar respuesta
-                    # Apply timeout only for RDT 3.0 (where packet loss is modeled)
-                    if self.rdt_version == "3.0" and self.timeout:
+                    # 3. Wait for response
+                    # Apply timeout for RDT versions that simulate packet loss
+                    if self.rdt_version in ["2.1", "2.2", "3.0"] and self.timeout:
                         self.sock.settimeout(self.timeout)
                     else:
                         # blocking mode
                         self.sock.settimeout(None)
 
-                    # Simulate ACK/NACK loss at the client side: cause a timeout
-                    if self.rdt_version in ["2.1", "2.2", "3.0"] and random.random() < self.p_ack_drop:
-                        print(f"\n[{ts()}] [SIMULACIÓN]: ACK/NACK perdido")
-                        intentos += 1
-                        continue
-
                     raw_res = self.sock.recv(1024).decode()
                     res_pkt = Packet.decode(raw_res)
 
-                    if not res_pkt:
-                        print(f"[{ts()}] [S] RECV Corrupt ACK/NACK -> Ignorar/Retransmitir")
-                        intentos += 1
+                    # Simulate ACK/NACK loss at the client side AFTER receiving
+                    # This ensures the buffer is cleared and loss is properly handled
+                    if self.rdt_version in ["2.1", "2.2", "3.0"] and random.random() < self.p_ack_drop:
+                        log(f"\n[SIMULACIÓN]: ACK/NACK perdido. Retransmitiendo DATA\n", "WARNING")
+                        attemps += 1
                         continue
 
-                    # 4. Lógica de Decisión según Protocolo
+                    if not res_pkt:
+                        log(f"[S] ACK/NACK corrupto -> Ignorar/Retransmitir", "WARNING")
+                        attemps += 1
+                        continue
+
+                    log(f"===== MANEJO DE RESPUESTA id={res_pkt.pkt_id} seq={res_pkt.seq} =====")
                     if self._check_success(self.rdt_version, res_pkt):
-                        print(f"[{ts()}] [S] RECV {res_pkt.tipo} seq={res_pkt.seq} -> OK.")
-                        entregado = True
-                        # Alternar secuencia para 2.1, 2.2 y 3.0
+                        log(f"[S] RECIBIDO {res_pkt.type} seq={res_pkt.seq} id={res_pkt.pkt_id} -> OK.")
+                        delivered = True
+                        # Toggle sequence for 2.1, 2.2 and 3.0
                         if self.rdt_version != "2.0":
                             self.current_seq = 1 - self.current_seq
                         self.global_pkt_id += 1
                     else:
                         # Distinguish corruption (NACK), duplicate/old ACKs, or generic rejection
-                        if res_pkt.tipo == "NACK":
-                            print(f"[{ts()}] [S] RECV NACK -> Receptor indica corrupción. Retransmitiendo...")
-                        elif res_pkt.tipo == "ACK" and res_pkt.seq != self.current_seq:
-                            print(f"[{ts()}] [S] RECV ACK seq={res_pkt.seq} -> DUPLICATE/OLD ACK (expected {self.current_seq}). Ignorando y retransmitiendo...")
+                        if res_pkt.type == "NACK":
+                            log(f"[S] NACK recibido -> Receptor indica corrupción. Retransmitiendo...", "WARNING")
+                        elif res_pkt.type == "ACK" and res_pkt.seq != self.current_seq:
+                            log(f"[S] ACK seq={res_pkt.seq} id={res_pkt.pkt_id} -> ACK DUPLICADO/ANTIGUO (esperado {self.current_seq}). Ignorando y retransmitiendo...", "WARNING")
                         else:
-                            print(f"[{ts()}] [S] RECV {res_pkt.tipo} seq={res_pkt.seq} -> RECHAZADO. Reintentando...")
-                        intentos += 1
+                            log(f"[S] {res_pkt.type} seq={res_pkt.seq} -> RECHAZADO. Reintentando...", "WARNING")
+                        attemps += 1
 
                 except socket.timeout:
-                    print(f"[{ts()}] [S] TIMEOUT expirado para id={pkt.pkt_id}. Retransmitiendo...")
-                    intentos += 1
+                    log(f"[S] Tiempo de espera expirado para id={pkt.pkt_id}. Retransmitiendo...", "WARNING")
+                    attemps += 1
 
     def _check_success(self, proto, res):
-        """Define qué es un 'éxito' para cada protocolo"""
+        """Defines what constitutes 'success' for each protocol."""
         if proto == "2.0":
-            return res.tipo == "ACK"
+            return res.type == "ACK"
             
         if proto in ["2.1", "2.2", "3.0"]:
-            return res.tipo == "ACK" and res.seq == self.current_seq
+            return res.type == "ACK" and res.seq == self.current_seq
             
         return False
 
     def close(self):
-        print(f"\n[{ts()}] Todos los mensajes fueron enviados y recibidos correctamente.")
-        print(f"[{ts()}] Terminando conexión.")
+        log(f"Todos los mensajes fueron enviados y recibidos correctamente.")
+        log(f"Terminando conexión.")
 
         self.sock.close()
 
-# Ejemplo de ejecución
+# Example execution
 if __name__ == "__main__":
-    client = RDTClient("127.0.0.1", 8080, rdt_version="2.1", timeout=2, p_ack_drop=0.1)
+    client = RDTClient("127.0.0.1", 8080, rdt_version="3.0", timeout=2, p_ack_drop=0.1)
     client.connect()
     
-    mensajes = ["Este es un test", "Laboratorio RDT"]
+    mensajes = ["Este es un test", "Laboratorio RDT", "Finalizar"]
     client.rdt_send(mensajes)
 
     client.close()
