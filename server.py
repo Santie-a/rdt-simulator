@@ -24,7 +24,7 @@ class RDTServer:
         
         # Protocol state
         self.expected_seq = 0
-        self.last_ack_sent = -1  # For RDT 2.2/3.0 when there's an error. Initialize to -1 so it doesn't match valid seq (0 or 1)
+        self.last_ack_sent = 1  # For RDT 2.2/3.0 when there's an error. Initialize to 1 so it doesn't match first valid seq 0
         
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -55,7 +55,7 @@ class RDTServer:
                 payload_to_check = pkt.payload
                 if random.random() < self.p_corrupt:
                     payload_to_check += "X" 
-                    log(f"[SIMULACIÓN] PKT con id={pkt.pkt_id}\n CORRUPTO", "WARNING")
+                    log(f"[SIMULACIÓN] PKT con id={pkt.pkt_id} CORRUPTO", "WARNING")
 
                 # Group separator for clearer per-packet logs
                 log(f"===== MANEJO RX PKT id={pkt.pkt_id} seq={pkt.seq} =====")
@@ -73,6 +73,7 @@ class RDTServer:
                         delay = random.uniform(2, self.max_delay)
                         log(f"[SIMULACIÓN] RETRASO de {delay:.2f}s antes de enviar respuesta para id={pkt.pkt_id}", "WARNING")
                         time.sleep(delay)
+                        continue
 
                     if self.proto == "2.0":
                         log(f"[R] ENVIAR {response.type} para id={pkt.pkt_id}")
@@ -137,5 +138,5 @@ class RDTServer:
         return None
 
 if __name__ == "__main__":
-    server = RDTServer(rdt_version="3.0", p_corrupt=0.1, p_drop=0.2, p_delay=0.2)
+    server = RDTServer(rdt_version="3.0", p_corrupt=0.3, p_drop=0.3, p_delay=0)
     server.start()
