@@ -138,5 +138,5 @@ class RDTServer:
         return None
 
 if __name__ == "__main__":
-    server = RDTServer(rdt_version="3.0", p_corrupt=0.3, p_drop=0.3, p_delay=0)
+    server = RDTServer(rdt_version="2.0", p_corrupt=0.25, p_drop=0, p_delay=0)
     server.start()

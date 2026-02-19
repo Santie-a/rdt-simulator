@@ -37,10 +37,10 @@ class RDTClient:
                 if attempts == 1:
                     pkt_type = "DATA"
                 else:
-                    pkt_type = f"RETX_{last_reason}"
+                    pkt_type = f"RETRANSMISSION_{last_reason}"
 
                 # Construir paquete
-                pkt = Packet(pkt_type, self.current_seq, self.global_pkt_id, message)
+                pkt = Packet(pkt_type, self.current_seq, self.global_pkt_id, message, attempt=attempts)
 
                 log(f"===== TX PKT id={pkt.pkt_id} seq={pkt.seq} type={pkt.type} =====")
                 log(f"[S] Enviando: {pkt.encode()} (Intento {attempts})")
@@ -89,8 +89,8 @@ class RDTClient:
                             log("[S] NACK recibido -> Retransmitiendo", "WARNING")
 
                         elif res_pkt.type == "ACK" and res_pkt.seq != self.current_seq:
-                            last_reason = "DUPACK"
-                            log("[S] ACK duplicado/antiguo -> Retransmitiendo", "WARNING")
+                            last_reason = "INCORRECT_SEQ"
+                            log("[S] ACK Incorrect -> Retransmitiendo", "WARNING")
 
                         else:
                             last_reason = "REJECT"
@@ -121,7 +121,7 @@ class RDTClient:
 if __name__ == "__main__":
 
     client = RDTClient(
-        server_ip="10.21.91.72",
+        server_ip="127.0.0.1",
         port=8080,
         rdt_version="2.2",
         timeout=2,
